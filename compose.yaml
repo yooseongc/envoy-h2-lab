@@ -10,6 +10,7 @@ x-tap: &tap
   volumes: ["./captures:/captures"]
 services:
   envoy:
+    labels: {lab.config.version: "http-front-1"}
     image: envoyproxy/envoy:v1.36-latest
     command: ["-c", "/etc/envoy/lab.yaml", "--concurrency", "1"]
     volumes: ["./envoy.yaml:/etc/envoy/lab.yaml:ro"]

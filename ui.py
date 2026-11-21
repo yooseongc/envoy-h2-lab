@@ -11,6 +11,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 from verify_captures import verify
+from lab_router import FRONT_PORT, upstream_router
 from decrypted import export_plaintext, export_trace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -171,18 +172,6 @@ def mitm_url_hop(target, folder, skip, keys, mode):
         wait_until(lambda:(folder/"mitm.done").exists(),10,"MITM 종료 시간 초과")
 
 
-def save_client_keys(worker,path,folder,name):
-    try:
-        chunks, _ = worker.get_archive(path)
-        with tarfile.open(fileobj=io.BytesIO(b"".join(chunks))) as archive:
-            data = archive.extractfile(archive.getmembers()[0]).read()
-        (folder / (name+".keys.tmp")).write_bytes(data)
-    except docker.errors.NotFound:
-        pass
-    finally:
-        worker.exec_run(["rm","-f",path])
-
-
 def direct_request(body):
     mode = body.get("target_mode","url")
     if mode not in ("url","origin"):
@@ -218,7 +207,7 @@ def direct_request(body):
     count = body.get("count")
     if type(skip) is not bool or type(count) is not int or count not in (1,4,8):
         raise ValueError("잘못된 요청 수 또는 TLS 옵션입니다.")
-    protocol = body.get("protocol", "HTTP/1.1")
+    protocol = body.get("protocol", "HTTP/2")
     if protocol not in ("HTTP/1.1","HTTP/2"):
         raise ValueError("지원하지 않는 HTTP 버전입니다.")
     if "clients" in body:
@@ -226,7 +215,7 @@ def direct_request(body):
     active = [(name, c) for name,c in workers("client").items() if c.status == "running"]
     if not active:
         raise ValueError("실행 중인 클라이언트가 없습니다.")
-    via = body.get("via", "nginx")
+    via = body.get("via", "mitm")
     if via not in ("envoy","nginx","mitm","external"):
         raise ValueError("잘못된 URL 경로입니다.")
     keys = body.get("keylog", False)
@@ -235,7 +224,7 @@ def direct_request(body):
     mitm_mode = body.get("mitm_mode", "reverse") if via == "mitm" else None
     if via == "mitm" and mitm_mode not in ("forward", "reverse"):
         raise ValueError("내장 MITM 방식은 forward 또는 reverse여야 합니다.")
-    external_mode = body.get("external_mode","forward") if via=="external" else None
+    external_mode = body.get("external_mode","reverse") if via=="external" else None
     if via == "external":
         if external_mode not in ("forward","reverse"):
             raise ValueError("외부 프록시 방식은 forward 또는 reverse여야 합니다.")
@@ -245,33 +234,22 @@ def direct_request(body):
             raise ValueError("외부 프록시 포트는 1~65535입니다.")
     port = target.port or (443 if target.scheme == "https" else 80)
     program = Path("direct_client.py").read_text(encoding="utf-8-sig")
-    wire_scheme = target.scheme
-    if via == "external" and external_mode == "reverse":
-        wire_scheme = body.get("listener_scheme") or target.scheme
-        if wire_scheme not in ("http", "https"):
-            raise ValueError("외부 리버스 리스너 방식은 http 또는 https여야 합니다.")
-    proxy_tls = False
-    if via == "mitm":
-        listener = body.get("mitm_listener") or ("http" if mitm_mode == "forward" else target.scheme)
-        if listener not in ("http", "https"):
-            raise ValueError("내장 MITM 리스너 방식은 http 또는 https여야 합니다.")
-        if mitm_mode == "reverse":
-            wire_scheme = listener
-        else:
-            proxy_tls = listener == "https"
+    forward = "forward" in (mitm_mode, external_mode)
+    listener = body.get("mitm_listener" if via == "mitm" else "listener_scheme") or (
+        "https" if via in ("external", "mitm") else target.scheme)
+    if listener not in ("http", "https"):
+        raise ValueError("올바른 프록시 리스너 방식을 선택하세요.")
     skip_proxy = body.get("skip_proxy_verify", False)
-    if type(skip_proxy) is not bool or (skip_proxy and (via != "mitm" or not (proxy_tls or wire_scheme == "https"))):
-        raise ValueError("MITM 인증서 검증 옵션은 클라이언트의 MITM TLS 연결에서만 사용할 수 있습니다.")
-    if via == "mitm" and protocol == "HTTP/2" and wire_scheme == "http":
-        raise ValueError("내장 MITM의 HTTP/2 요청에는 TLS가 필요합니다.")
-    verify_scheme = target.scheme if via == "mitm" else wire_scheme
-    if skip and verify_scheme != "https":
-        raise ValueError("인증서 검증 옵션은 TLS 연결에서만 사용할 수 있습니다.")
-    has_tls = proxy_tls or wire_scheme == "https" or (via == "mitm" and target.scheme == "https")
+    if type(skip_proxy) is not bool:
+        raise ValueError("잘못된 TLS 검증 옵션입니다.")
+    upstream_tls = target.scheme == "https" if forward else listener == "https"
+    if via == "mitm" and protocol == "HTTP/2" and not upstream_tls:
+        raise ValueError("내장 MITM의 HTTP/2에는 TLS가 필요합니다.")
+    has_tls = upstream_tls or listener == "https" or target.scheme == "https"
     keys = keys and has_tls
     decrypt = via == "mitm" and has_tls and body.get("decrypt", True) is True
     origin_trust = ""
-    if mode == "origin" and scheme == "https" and not skip:
+    if mode == "origin" and via != "external" and scheme == "https" and not skip:
         for replica in ([pool[instance or "origin-1"]] if instance or via == "external" else pool.values()):
             wait_until(lambda: replica.exec_run(["test","-s","/tmp/lab-origin.pem"]).exit_code == 0,
                        10, "Origin TLS 인증서 준비 시간 초과")
@@ -281,22 +259,15 @@ def direct_request(body):
             origin_trust += cert.decode()
     def invoke(item):
         name, worker = item
-        keypath = "/tmp/"+run+".keys" if keys else ""
-        try:
-            ca = (folder/"client-ca.pem").read_text() if via=="mitm" and has_tls else origin_trust
-            code, output = worker.exec_run(["python","-c",program,name,url,
-                "skip" if skip_proxy or (skip and via!="mitm") else "verify",start,str(count),hop,str(hop_port),
-                protocol,("forward" if "forward" in (mitm_mode, external_mode) else "direct"),keypath,ca,wire_scheme,"tls" if proxy_tls else "plain"])
-            if code:
-                raise RuntimeError(f"{name}: URL 요청 프로그램 실행 실패")
-            return json.loads(output)
-        finally:
-            if keys:
-                save_client_keys(worker,keypath,folder,name)
+        code, output = worker.exec_run(["python", "-c", program, name, url, start, str(count),
+                                        str(FRONT_PORT), mode])
+        if code:
+            raise RuntimeError(f"{name}: HTTP 요청 프로그램 실행 실패")
+        return json.loads(output)
     run = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
     folder = root / run
     folder.mkdir()
-    plan = {"front":("front",10001,"receive")}
+    plan = {"front":("front",FRONT_PORT,"receive")}
     if via=="mitm":
         plan.update(middle=("mitm",8082,"receive"), back=("mitm",port,"send"))
         route_context = mitm_url_hop(target,folder,skip,keys or decrypt,mitm_mode)
@@ -310,16 +281,23 @@ def direct_request(body):
         plan["back"] = ("front",port,"send")
         route_context = nullcontext((target.hostname,port))
     (folder / "manifest.json").write_text(json.dumps(dict(route="url",target_mode=mode,origin=body.get("origin") or None,via=via,external_mode=external_mode,mitm_mode=mitm_mode,host=target.hostname,
-        skip_proxy_verify=skip_proxy, skip_verify=skip, protocol=protocol, target_url=url, listener_scheme=listener if via=='mitm' else wire_scheme, capture_plan=plan),indent=2))
+        skip_proxy_verify=skip_proxy, skip_verify=skip, protocol=protocol, target_url=url, listener_scheme=listener, front_protocol='HTTP/1.1 plain', capture_plan=plan),indent=2))
     if origin_trust and via == "mitm":
         (folder/"origin-trust.pem").write_text(origin_trust)
     decrypted_files = []
     try:
         with packet_capture(folder, plan):
             with route_context as (hop, hop_port):
-                start = str(time.time() + 0.8)
-                with ThreadPoolExecutor(max_workers=len(active)) as pool:
-                    rows = [row for batch in pool.map(invoke, active) for row in batch]
+                ca = (folder/"client-ca.pem").read_text() if via == "mitm" else ("" if via == "external" else origin_trust)
+                base = container("envoy")
+                front_ip = base.attrs["NetworkSettings"]["Networks"][project+"_front"]["IPAddress"]
+                with upstream_router(engine, base, container("tap-front"), project, front_ip, target,
+                                     hop, hop_port, protocol, forward, listener == "https", ca,
+                                     skip_proxy if via == "mitm" else skip,
+                                     folder/"envoy.keys" if keys else None, wait_until):
+                    start = str(time.time() + 0.8)
+                    with ThreadPoolExecutor(max_workers=len(active)) as pool:
+                        rows = [row for batch in pool.map(invoke, active) for row in batch]
         if decrypt and (folder/"proxy.keys").is_file() and (folder/"proxy.keys").stat().st_size:
             for leg in ("middle","back"):
                 decrypted_files.append(export_trace(folder, leg))
@@ -333,17 +311,12 @@ def direct_request(body):
         if decrypt and not keys:
             (folder/"proxy.keys").unlink(missing_ok=True)
     (folder / "responses.json").write_text(json.dumps(rows,indent=2))
-    fragments = sorted(folder.glob("client-*.keys.tmp"))
-    if fragments:
-        (folder/"client.keys").write_bytes(b"\n".join(part.read_bytes() for part in fragments))
-        for part in fragments:
-            part.unlink()
-    extras = decrypted_files + [file for file in ("client.keys","proxy.keys","flows.mitm")
-              if (folder/file).is_file() and (folder/file).stat().st_size]
+    extras = decrypted_files + [file for file in ("envoy.keys", "proxy.keys")
+                                if (folder/file).is_file() and (folder/file).stat().st_size]
     marker = folder / "url-result.tmp"
     marker.write_text(json.dumps({"run":run,"legs":list(plan),"extras":extras}))
     marker.replace(folder / "url-result.json")
-    return dict(run=run,legs=list(plan),extras=extras,url=url,external_mode=external_mode,mitm_mode=mitm_mode,protocol=protocol, via={"envoy":"Envoy","nginx":"Envoy → Nginx","mitm":"Envoy → 내장 "+("포워드" if mitm_mode=="forward" else "리버스"),"external":"Envoy → 외부 "+("리버스" if external_mode=="reverse" else "포워드")}[via], tls=("검증 생략" if skip else "검증 사용") if wire_scheme=="https" else "HTTP",
+    return dict(run=run,legs=list(plan),extras=extras,url=url,external_mode=external_mode,mitm_mode=mitm_mode,protocol=protocol, via={"envoy":"Envoy","nginx":"Envoy → Nginx","mitm":"Envoy → 내장 "+("포워드" if mitm_mode=="forward" else "리버스"),"external":"Envoy → 외부 "+("리버스" if external_mode=="reverse" else "포워드")}[via], tls=("검증 생략" if skip else "검증 사용") if upstream_tls else "HTTP",
                 responses=rows)
 
 def experiment(route, count):
@@ -414,7 +387,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/captures/latest":
             for folder in sorted(root.iterdir(), reverse=True):
                 if re.fullmatch(r"\d{8}T\d{6}Z-[0-9a-f]{8}", folder.name) and (folder/"url-result.json").is_file():
-                    return self.reply(200,json.loads((folder/"url-result.json").read_text()))
+                    result = json.loads((folder/"url-result.json").read_text())
+                    result["extras"] = [name for name in result.get("extras", []) if name != "flows.mitm"]
+                    if (folder/"responses.json").is_file():
+                        result["responses"] = json.loads((folder/"responses.json").read_text())
+                    return self.reply(200,result)
                 if re.fullmatch(r"\d{8}T\d{6}Z-[0-9a-f]{8}", folder.name) and all(
                     (folder / (leg + ".done")).is_file() and (folder / (leg + ".pcap")).is_file()
                     for leg in legs):
@@ -425,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
                                       server_names=manifest.get("server_names", {}))
                     return self.reply(200, result)
             return self.reply(200, {"run":None})
-        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/((?:front|middle|back)\.pcap|(?:middle|back)-(?:decrypted|plaintext)\.pcapng|(?:client|proxy)\.keys|flows\.mitm)", self.path)
+        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/((?:front|middle|back)\.pcap|(?:middle|back)-(?:decrypted|plaintext)\.pcapng|(?:client|envoy|proxy)\.keys)", self.path)
         if match:
             run, name = match.groups()
             folder = root / run

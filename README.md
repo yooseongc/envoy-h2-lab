@@ -1,6 +1,6 @@
 # HTTP 프록시 실험실
 
-클라이언트가 Envoy를 거쳐 내장 MITM 또는 외부 프록시로 보내는 HTTP 요청을 실험합니다. 브라우저에서 목적지, TLS 사용 여부, HTTP 버전과 동시 요청 수를 선택하고 구간별 패킷을 Wireshark로 확인할 수 있습니다.
+클라이언트가 Envoy를 거쳐 내장 MITM 또는 외부 프록시로 보내는 HTTP 요청을 실험합니다. **클라이언트 → Envoy는 평문 HTTP/1.1 GET으로 고정됩니다.** Envoy가 실제 클라이언트 IP를 X-Forwarded-For(XFF)에 추가합니다. 요청 구성의 HTTP 버전과 TLS는 Envoy의 업스트림 연결에 적용됩니다.
 
 ## 설치하고 열기
 
@@ -18,12 +18,12 @@
 
 ## 첫 HTTP/2 캡처
 
-1. **대상 서버**에서 **실험용 Origin**과 **TLS (HTTPS) · 8443**을 고릅니다.
-2. **경유 프록시**에서 **내장 MITM**, 방식은 **리버스**, 리스너는 **모드 기본값**으로 둡니다. 클라이언트 → Envoy → MITM → Origin 경로가 구성도에 표시됩니다.
-3. **요청 구성**에서 HTTP/2, 클라이언트 2개, Origin 1개, 클라이언트당 동시 요청 4개를 선택합니다.
-4. **TLS 검증 및 캡처 옵션**에서 Wireshark 추적용 PCAPNG 저장을 선택하고 **캡처 및 전송**을 누릅니다. 응답 수와 오류 수를 확인하고 결과에서 원하는 파일을 저장합니다.
+1. **대상 서버**에서 실험용 Origin 또는 직접 입력한 URL을 선택합니다. Origin의 평문/TLS는 프록시 → Origin 구간의 설정입니다.
+2. 기본값인 **내장 MITM · 리버스**, **Envoy 업스트림 HTTP/2**, **프록시 리스너 연결 TLS**를 유지합니다. 외부 프록시로 바꾸면 Envoy에서 접근 가능한 프록시 IP와 포트를 입력합니다.
+3. 클라이언트 수와 클라이언트당 동시 요청 수를 정한 뒤 **캡처 및 전송**을 누릅니다. 실험용 Origin을 선택하면 결과 표에 클라이언트별 처리 서버와 Origin이 실제로 수신한 XFF가 표시됩니다.
+4. Wireshark에서 `front.pcap`의 GET 소스 IP와 `middle-decrypted.pcapng`의 요청 HEADERS 안에 있는 `x-forwarded-for`를 비교합니다. `x-lab-client`와 `x-lab-request`로 같은 요청을 찾을 수 있습니다. 여러 요청의 TCP 스트림 번호가 같고 H2 스트림 ID가 다르면 해당 업스트림 연결을 공유한 것입니다.
 
-외부 프록시를 시험할 때는 Envoy에서 접근할 수 있는 IP와 포트를 입력합니다. 포워드 모드는 터널 안에서 두 번째 CONNECT로 목적지를 전달합니다. 리버스 모드는 외부 프록시에 업스트림을 미리 설정하고 해당 리스너의 평문 또는 TLS 설정을 UI와 맞춥니다. 직접 입력한 서버 URL도 같은 방법으로 실험할 수 있습니다.
+리버스 모드에서는 Envoy가 프록시 리스너에 HTTP 요청을 직접 보냅니다. 포워드 모드는 Envoy의 업스트림 쪽에서 HTTP/1.1 CONNECT로 목적 서버 터널을 만들고 그 안에 선택한 HTTP 버전의 GET을 보냅니다. 포워드에서 리스너 TLS는 CONNECT 자체를 보호하며, 터널 내부 TLS는 목적 URL의 스킴을 따릅니다.
 
 ## 캡처 파일 사용하기
 
@@ -34,7 +34,7 @@
 | `back.pcap` | 내장 MITM → 대상 서버. 외부 프록시의 송신 구간은 해당 프록시에서 수집 |
 | `*-plaintext.pcapng` | TLS를 제거한 평문 TCP 재구성. Follow TCP Stream, HTTP/1.1의 Follow HTTP Stream, HTTP/2의 Follow HTTP/2 Stream에 사용 |
 | `*-decrypted.pcapng` | 내장 MITM 구간의 원본 프레임과 실행별 TLS 복호화 키를 함께 담은 Wireshark 파일 |
-| `client.keys`, `proxy.keys` | 키 저장을 선택했을 때 생성되는 TLS 키 로그. Wireshark의 TLS 설정에서 같은 실행의 파일 지정 |
+| `envoy.keys`, `proxy.keys` | 키 저장을 선택했을 때 생성되는 TLS 키 로그. Wireshark의 TLS 설정에서 같은 실행의 파일 지정 |
 
 원본은 항상 `captures/<실행 ID>/`에 있습니다. UI에서 **파일명 다운로드**를 누르면 브라우저의 다운로드 설정에 따라 저장합니다. 위치와 이름을 직접 고르려면 지원 브라우저에서 **다른 이름으로 저장**을 누르세요. 저장 창이 차단된 환경에서도 다운로드 링크는 독립적으로 작동합니다. 서버에서 원본을 직접 열어도 됩니다.
 

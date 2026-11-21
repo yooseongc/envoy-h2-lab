@@ -17,13 +17,13 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}th,td{text-align:le
 
 
 <label id="mitmModeLabel" hidden>내장 MITM 방식 <select id="mitmMode"><option value="reverse">리버스 · 대상 사전 설정</option><option value="forward">포워드 · CONNECT</option></select></label>
-<label id="mitmListenerLabel" hidden>내장 MITM 리스너 <select id="mitmListener"><option value="">모드 기본값</option><option value="http">평문 TCP</option><option value="https">TLS</option></select></label>
-<div id="external" class="fields" hidden><label>외부 프록시 방식 <select id="externalMode"><option value="forward">포워드 · CONNECT</option><option value="reverse">리버스 · 대상 사전 설정</option></select></label><label id="listenerLabel" hidden>리버스 리스너 <select id="listenerScheme"><option value="">대상과 동일</option><option value="https">TLS (HTTPS)</option><option value="http">평문 HTTP</option></select></label><label>프록시 IP <input id="proxyIp" placeholder="192.168.1.10"></label><label>포트 <input id="proxyPort" type="number" min="1" max="65535" value="8080"></label></div>
+
+<div id="external" class="fields" hidden><label>외부 프록시 방식 <select id="externalMode"><option value="reverse">리버스 · 대상 사전 설정</option><option value="forward">포워드 · CONNECT</option></select></label><label>프록시 IP <input id="proxyIp" placeholder="192.168.1.10"></label><label>포트 <input id="proxyPort" type="number" min="1" max="65535" value="8080"></label></div>
 </div></section>
-<section><h2>요청 구성</h2><div class="fields"><label>요청 프로토콜 <select id="urlProtocol"><option>HTTP/1.1</option><option>HTTP/2</option></select></label><small id="h2Hint" hidden>내장 MITM에서 HTTP/2 요청은 TLS가 필요합니다.</small><label>클라이언트 수 <select id="n"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+<section><h2>요청 구성</h2><div class="fields"><label>Envoy 업스트림 HTTP <select id="urlProtocol"><option>HTTP/2</option><option>HTTP/1.1</option></select></label><label>프록시 리스너 연결 <select id="listenerScheme"><option value="https">TLS</option><option value="http">평문 TCP</option></select></label><small id="h2Hint" hidden>내장 MITM에서 HTTP/2 요청은 TLS가 필요합니다.</small><label>클라이언트 수 <select id="n"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
 <label id="serverCount">Origin 수 <select id="m"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
 <button id="apply">대수 적용</button><label>클라이언트당 동시 요청 <select id="count"><option>1</option><option selected>4</option><option>8</option></select></label></div><details><summary>인스턴스 상태</summary><div id="clients"></div><div id="servers"></div></details></section>
-<section><h2>캡처 지점</h2><details id="tlsOptions" hidden><summary>TLS 검증 및 캡처 옵션</summary><div class="options"><label id="proxyVerifyLabel" hidden><input id="skipProxy" type="checkbox"> 이 실행에서 클라이언트의 MITM 인증서 검증 생략</label><label id="decryptOption"><input id="decrypt" type="checkbox" checked> Wireshark 추적용 PCAPNG 저장 (원본+키, 평문 TCP)</label><label><input id="keylog" type="checkbox"> Wireshark용 TLS 키 저장</label><label id="upstreamVerifyLabel"><input id="skip" type="checkbox"> <span id="skipLabel">이 실행에서 클라이언트 인증서 검증 생략</span></label></div></details><div class="diagram"><svg id="diagram" viewBox="0 0 840 184" role="img" aria-labelledby="diagramTitle diagramDesc"></svg></div>
+<section><h2>캡처 지점</h2><details id="tlsOptions" hidden><summary>TLS 검증 및 캡처 옵션</summary><div class="options"><label id="proxyVerifyLabel" hidden><input id="skipProxy" type="checkbox"> 이 실행에서 Envoy의 MITM 인증서 검증 생략</label><label id="decryptOption"><input id="decrypt" type="checkbox" checked> Wireshark 추적용 PCAPNG 저장 (원본+키, 평문 TCP)</label><label><input id="keylog" type="checkbox"> Wireshark용 TLS 키 저장</label><label id="upstreamVerifyLabel"><input id="skip" type="checkbox"> <span id="skipLabel">이 실행에서 클라이언트 인증서 검증 생략</span></label></div></details><div class="diagram"><svg id="diagram" viewBox="0 0 840 184" role="img" aria-labelledby="diagramTitle diagramDesc"></svg></div>
 <button id="run">캡처 및 전송</button></section>
 <section><h2>실험 결과</h2><div id="message" role="status"></div><div id="mapping"></div><div id="downloads" hidden><strong>실행 파일 저장</strong> <span id="captureId"></span><p id="files"></p><p id="decodeHelp" hidden></p></div><details><summary>응답 상세</summary><pre id="result" hidden></pre></details></section></main>
 <script>
@@ -53,13 +53,10 @@ function pathView(){
 
    let target;
    try{const u=new URL(lab?(el('originScheme').value==='https'?'https://origin:8443/':'http://origin:8000/'):el('url').value);if(['http:','https:'].includes(u.protocol))target=u;}catch{}
-   const reverseExternal=selectedProxy==='external' && el('externalMode').value==='reverse';
-   el('listenerLabel').hidden=!reverseExternal;
    const builtin=selectedProxy==='mitm', builtinForward=builtin && el('mitmMode').value==='forward';
-   const builtinScheme=el('mitmListener').value||(builtinForward?'http':target?.protocol.slice(0,-1));
-   const tls=builtin ? builtinScheme==='https' : reverseExternal && el('listenerScheme').value ? el('listenerScheme').value==='https' : target?.protocol==='https:';
+   const tls=el('listenerScheme').value==='https';
    const noH2=builtin && (builtinForward ? target?.protocol!=='https:' : !tls);
-   el('urlProtocol').options[1].disabled=noH2;
+   el('urlProtocol').options[0].disabled=noH2;
    if(noH2)el('urlProtocol').value='HTTP/1.1';
    el('h2Hint').hidden=!noH2;
    el('upstreamVerifyLabel').hidden=builtin && target?.protocol!=='https:';
@@ -71,10 +68,10 @@ function pathView(){
    const port=target?.port||(target?.protocol==='https:'?'443':'80');
    const svg=el('diagram');
    const via=selectedProxy;
-   el('skipLabel').textContent=via==='mitm'?'이 실행에서 MITM → 서버 인증서 검증 생략':'이 실행에서 클라이언트의 상대 인증서 검증 생략';
+   el('skipLabel').textContent=via==='mitm'?'이 실행에서 MITM → 서버 인증서 검증 생략':'이 실행에서 Envoy의 상대 인증서 검증 생략';
    const payload=target?el('urlProtocol').value+(tls?' over TLS':' · 평문'):'서버 URL 입력 대기';
    const forward=el(via==='mitm'?'mitmMode':'externalMode').value==='forward';
-   el('mitmModeLabel').hidden=el('mitmListenerLabel').hidden=!builtin;
+   el('mitmModeLabel').hidden=!builtin;
    const label={mitm:forward?'내장 포워드':'내장 리버스',external:forward?'외부 포워드':'외부 리버스'}[via];
    el('decryptOption').hidden=via!=='mitm';el('external').hidden=via!=='external';el('tlsOptions').hidden=!(tls||upstreamTls);
    if(!tls&&!upstreamTls)el('keylog').checked=false;
@@ -85,9 +82,9 @@ function pathView(){
      if(i){const left=nodes[i-1][0]+67,right=x-w/2, center=(left+right)/2;
        const last=i===nodes.length-1;
        let setup='', protocol=payload;
-       if(i===1)setup='HTTP/1.1 CONNECT';
-       if(['external','mitm'].includes(via) && i===2)setup=forward?'두 번째 CONNECT':(target?(tls?'바로 TLS 핸드셰이크':'바로 HTTP 요청'):'두 번째 CONNECT 없음');
-       if(builtinForward && i===2){setup=tls?'TLS → CONNECT':'평문 CONNECT';protocol=el('urlProtocol').value+(upstreamTls?' · 터널 내 TLS':' · 터널 내 평문');}
+       if(i===1){setup='GET';protocol='HTTP/1.1 · 평문';}
+       if(['external','mitm'].includes(via) && i===2)setup=forward?'CONNECT':(target?(tls?'바로 TLS 핸드셰이크':'바로 HTTP 요청'):'리버스');
+       if(forward && i===2){setup=tls?'TLS → CONNECT':'평문 CONNECT';protocol=el('urlProtocol').value+(target?.protocol==='https:'?' · 터널 내 TLS':' · 터널 내 평문');}
        if(via==='mitm' && last)protocol=!target?'서버 URL 입력 대기':upstreamTls?'TLS · HTTP 버전 협상':'평문 HTTP · 프록시가 선택';
        if(via==='external' && last)protocol='외부 프록시 설정에 따름';
        svg.insertAdjacentHTML('beforeend',`<g class="hopProtocol"><text x="${center}" y="25" class="port">${setup}</text><text x="${center}" y="45">${protocol}</text></g>`);
@@ -95,8 +92,8 @@ function pathView(){
      svg.insertAdjacentHTML('beforeend',`<rect x="${x-w/2}" y="56" width="${w}" height="44" rx="7" fill="#e4efe8"/><text x="${x}" y="83"></text>`);
      svg.lastElementChild.textContent=name||(host.length>27?host.slice(0,25)+'…':host);
    });
-   svg.insertAdjacentHTML('beforeend',`<text x="420" y="140">${target?(target.protocol==='https:'?'HTTPS':'HTTP')+' GET · '+el('urlProtocol').value+' · 대상 포트 '+port+' · ':''}${tls?'TLS 암호화 패킷 수집':'TCP 패킷 수집'}</text>`);
-   if((builtin||via==='external') && (tls||upstreamTls))svg.insertAdjacentHTML('beforeend','<text x="420" y="165" class="port">Envoy는 TLS를 전달하며 프록시 인증서 검사는 클라이언트가 수행합니다.</text>');
+   svg.insertAdjacentHTML('beforeend',`<text x="420" y="140">${target?'대상 서버 · '+(target.protocol==='https:'?'HTTPS':'HTTP')+' · 포트 '+port:'대상 URL 입력 대기'}</text>`);
+   if((builtin||via==='external') && (tls||upstreamTls))svg.insertAdjacentHTML('beforeend','<text x="420" y="165" class="port">Envoy가 클라이언트 IP를 X-Forwarded-For에 추가합니다.</text>');
    el('diagramDesc').textContent='클라이언트 → Envoy → '+label+' → '+host;
 
 }
@@ -113,14 +110,15 @@ function showMapping(data){
  const table=document.createElement('table');
  table.createCaption().textContent='클라이언트별 처리 서버 · 셀 안의 숫자는 요청 번호';
  const head=table.createTHead().insertRow();
- for(const title of ['클라이언트',...servers.map(([ip,name])=>name+' ('+ip+')')]){
+ for(const title of ['클라이언트','Origin 수신 XFF',...servers.map(([ip,name])=>name+' ('+ip+')')]){
    const th=document.createElement('th');th.scope='col';th.textContent=title;head.append(th);
  }
  const body=table.createTBody();
  for(const client of [...new Set(rows.map(r=>r.client))].sort()){
    const tr=body.insertRow(),th=document.createElement('th');th.scope='row';th.textContent=client;tr.append(th);
+   tr.insertCell().textContent=[...new Set(rows.filter(r=>r.client===client).map(r=>r.xff||'—'))].join(', ');
    for(const [ip] of servers){
-     const ids=rows.filter(r=>r.client===client&&r.server_ip===ip).map(r=>Number(r.path.split('/').pop())).sort((a,b)=>a-b);
+     const ids=rows.filter(r=>r.client===client&&r.server_ip===ip).map(r=>r.request??Number(r.path.split('/').pop())).sort((a,b)=>a-b);
      tr.insertCell().textContent=ids.length?ids.map(id=>'#'+id).join(', '):'—';
    }
  }
@@ -129,13 +127,14 @@ function showMapping(data){
 function showDownloads(run,legs=['front','middle','back'],extras=[]){
  if(!run)return;
  const help=el('decodeHelp');
- help.hidden=!extras.some(name=>name.endsWith('.keys')||name==='flows.mitm');
+ help.hidden=!extras.some(name=>name.endsWith('.keys'));
  const notes=[];
  if(extras.some(name=>name.endsWith('-plaintext.pcapng')))notes.push('TCP·HTTP·HTTP/2 Follow에는 -plaintext.pcapng를 여세요. TCP에는 TLS를 제거한 바이트가, HTTP/2에는 스트림별 헤더와 본문이 표시됩니다.');
  if(extras.some(name=>name.endsWith('-decrypted.pcapng')))notes.push('새로 생성한 -decrypted.pcapng에는 원본 IP/TCP 패킷과 해당 실행의 TLS 키가 들어 있습니다. Wireshark에서 TCP 연결은 tcp.stream, 복호화된 요청은 HTTP/2 또는 TLS 스트림으로 추적하세요.');
  if(extras.includes('proxy.keys'))notes.push('Wireshark에서 middle 또는 back PCAP을 열고 TLS 설정의 키 로그 파일로 proxy.keys를 선택하세요.');
+ else if(extras.includes('envoy.keys'))notes.push('Envoy → 프록시 TLS 세션은 envoy.keys로 복호화하세요.');
  else if(extras.includes('client.keys'))notes.push('Wireshark의 TLS 키 로그 파일로 client.keys를 선택하세요. 외부 MITM의 서버 측 연결에는 외부 프록시의 키가 필요합니다.');
- if(extras.includes('flows.mitm'))notes.push('flows.mitm은 mitmproxy에서 열어 요청과 응답을 확인할 수 있습니다.');
+
  help.textContent=notes.join(' ');
  el('captureId').textContent=run;el('files').replaceChildren();
  for(const leg of [...legs,...extras]){
@@ -188,7 +187,7 @@ async function work(fn){
  busy=false;document.querySelectorAll('button,select,#proxyChoices input').forEach(e=>e.disabled=false);}
 }
 el('apply').onclick=()=>work(async()=>{await api('/scale',{clients:Number(el('n').value),servers:Number(el('m').value)});el('message').textContent='대수를 적용했습니다.';});
-el('targetMode').onchange=()=>{el('skip').checked=false;pathView();};el('originScheme').onchange=()=>{el('skip').checked=false;pathView();};el('instance').onchange=pathView;el('mitmMode').onchange=pathView;el('mitmListener').onchange=pathView;el('externalMode').onchange=pathView;el('listenerScheme').onchange=pathView;el('urlProtocol').onchange=pathView;el('url').oninput=pathView;el('n').onchange=()=>{activeClients=Number(el('n').value);pathView();};el('m').onchange=pathView;
+el('targetMode').onchange=()=>{el('skip').checked=false;pathView();};el('originScheme').onchange=()=>{el('skip').checked=false;pathView();};el('instance').onchange=pathView;el('mitmMode').onchange=pathView;el('externalMode').onchange=pathView;el('listenerScheme').onchange=pathView;el('urlProtocol').onchange=pathView;el('url').oninput=pathView;el('n').onchange=()=>{activeClients=Number(el('n').value);pathView();};el('m').onchange=pathView;
 el('run').onclick=()=>work(async()=>{
 
    const lab=el('targetMode').value==='origin';
@@ -196,10 +195,10 @@ el('run').onclick=()=>work(async()=>{
    if(!lab&&(!/^https?:\/\//i.test(url)||!el('url').checkValidity()))throw Error('http:// 또는 https:// 서버 URL을 입력하세요.');
    const skipProxy=el('skipProxy').checked;el('skipProxy').checked=false;const skip=el('skip').checked;el('skip').checked=false;
    el('mapping').replaceChildren();el('downloads').hidden=true;el('result').hidden=true;
-   el('message').textContent='클라이언트에서 URL로 요청 중…';
-   const d=await api('/direct',{url,target_mode:lab?'origin':'url',origin:lab?el('instance').value:'',...(lab?{servers:Number(el('m').value),origin_scheme:el('originScheme').value}:{}),via:selectedProxy,protocol:el('urlProtocol').value,decrypt:el('decrypt').checked,keylog:el('keylog').checked,mitm_listener:el('mitmListener').value,mitm_mode:el('mitmMode').value,external_mode:el('externalMode').value,listener_scheme:el('listenerScheme').value,proxy_ip:el('proxyIp').value.trim(),proxy_port:Number(el('proxyPort').value),skip_proxy_verify:skipProxy,skip_verify:skip,count:Number(el('count').value),clients:Number(el('n').value)});
+   el('message').textContent='Envoy 경유 요청 전송 중…';
+   const d=await api('/direct',{url,target_mode:lab?'origin':'url',origin:lab?el('instance').value:'',...(lab?{servers:Number(el('m').value),origin_scheme:el('originScheme').value}:{}),via:selectedProxy,protocol:el('urlProtocol').value,decrypt:el('decrypt').checked,keylog:el('keylog').checked,mitm_listener:el('listenerScheme').value,mitm_mode:el('mitmMode').value,external_mode:el('externalMode').value,listener_scheme:el('listenerScheme').value,proxy_ip:el('proxyIp').value.trim(),proxy_port:Number(el('proxyPort').value),skip_proxy_verify:skipProxy,skip_verify:skip,count:Number(el('count').value),clients:Number(el('n').value)});
    el('result').textContent=JSON.stringify(d,null,2);el('result').hidden=false;
-   showDownloads(d.run,d.legs,d.extras);
+   showMapping(d);showDownloads(d.run,d.legs,d.extras);
    const received=d.responses.filter(r=>r.status).length;
    el('message').textContent=d.via+' · '+d.protocol+' · HTTP 응답 '+received+'개 · 연결 오류 '+(d.responses.length-received)+'개';
 

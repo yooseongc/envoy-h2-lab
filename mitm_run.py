@@ -16,8 +16,7 @@ with tempfile.TemporaryDirectory() as conf:
         env["SSLKEYLOGFILE"] = str(folder / "proxy.keys")
     listener = "regular" if mode == "forward" else "reverse:" + upstream
     command = ["mitmdump", "--mode", listener, "--listen-port", "8082",
-               "--set", "confdir=" + conf, "--set", "keep_host_header=true",
-               "-w", str(folder / "flows.mitm")]
+               "--set", "confdir=" + conf, "--set", "keep_host_header=true"]
     if (folder/"origin-trust.pem").exists():
         command.extend(["--set", "ssl_verify_upstream_trusted_ca=" + str(folder/"origin-trust.pem")])
     if insecure == "yes":

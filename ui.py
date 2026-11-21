@@ -11,7 +11,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 from verify_captures import verify
-from decrypted import export_http_pdus
+from decrypted import export_plaintext, export_trace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -320,11 +320,15 @@ def direct_request(body):
                 start = str(time.time() + 0.8)
                 with ThreadPoolExecutor(max_workers=len(active)) as pool:
                     rows = [row for batch in pool.map(invoke, active) for row in batch]
-        if decrypt and (folder/"proxy.keys").is_file():
+        if decrypt and (folder/"proxy.keys").is_file() and (folder/"proxy.keys").stat().st_size:
             for leg in ("middle","back"):
-                filename = export_http_pdus(folder,leg,plan[leg][1])
-                if filename:
-                    decrypted_files.append(filename)
+                decrypted_files.append(export_trace(folder, leg))
+                forward = leg == "middle" and mitm_mode == "forward"
+                tls = (listener if leg == "middle" else target.scheme) == "https"
+                plain = export_plaintext(folder, leg, plan[leg][1], tls, forward,
+                                         forward and target.scheme == "https")
+                if plain:
+                    decrypted_files.append(plain)
     finally:
         if decrypt and not keys:
             (folder/"proxy.keys").unlink(missing_ok=True)
@@ -421,7 +425,7 @@ class Handler(BaseHTTPRequestHandler):
                                       server_names=manifest.get("server_names", {}))
                     return self.reply(200, result)
             return self.reply(200, {"run":None})
-        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/((?:front|middle|back)\.pcap|(?:middle|back)-decrypted\.pcapng|(?:client|proxy)\.keys|flows\.mitm)", self.path)
+        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/((?:front|middle|back)\.pcap|(?:middle|back)-(?:decrypted|plaintext)\.pcapng|(?:client|proxy)\.keys|flows\.mitm)", self.path)
         if match:
             run, name = match.groups()
             folder = root / run

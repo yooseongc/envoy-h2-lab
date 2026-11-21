@@ -23,7 +23,7 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}th,td{text-align:le
 <section><h2>요청 구성</h2><div class="fields"><label>요청 프로토콜 <select id="urlProtocol"><option>HTTP/1.1</option><option>HTTP/2</option></select></label><small id="h2Hint" hidden>내장 MITM에서 HTTP/2 요청은 TLS가 필요합니다.</small><label>클라이언트 수 <select id="n"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
 <label id="serverCount">Origin 수 <select id="m"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
 <button id="apply">대수 적용</button><label>클라이언트당 동시 요청 <select id="count"><option>1</option><option selected>4</option><option>8</option></select></label></div><details><summary>인스턴스 상태</summary><div id="clients"></div><div id="servers"></div></details></section>
-<section><h2>캡처 지점</h2><details id="tlsOptions" hidden><summary>TLS 검증 및 캡처 옵션</summary><div class="options"><label id="proxyVerifyLabel" hidden><input id="skipProxy" type="checkbox"> 이 실행에서 클라이언트의 MITM 인증서 검증 생략</label><label id="decryptOption"><input id="decrypt" type="checkbox" checked> 복호화된 HTTP 패킷 저장 (.pcapng)</label><label><input id="keylog" type="checkbox"> Wireshark용 TLS 키 저장</label><label id="upstreamVerifyLabel"><input id="skip" type="checkbox"> <span id="skipLabel">이 실행에서 클라이언트 인증서 검증 생략</span></label></div></details><div class="diagram"><svg id="diagram" viewBox="0 0 840 184" role="img" aria-labelledby="diagramTitle diagramDesc"></svg></div>
+<section><h2>캡처 지점</h2><details id="tlsOptions" hidden><summary>TLS 검증 및 캡처 옵션</summary><div class="options"><label id="proxyVerifyLabel" hidden><input id="skipProxy" type="checkbox"> 이 실행에서 클라이언트의 MITM 인증서 검증 생략</label><label id="decryptOption"><input id="decrypt" type="checkbox" checked> Wireshark 추적용 PCAPNG 저장 (원본+키, 평문 TCP)</label><label><input id="keylog" type="checkbox"> Wireshark용 TLS 키 저장</label><label id="upstreamVerifyLabel"><input id="skip" type="checkbox"> <span id="skipLabel">이 실행에서 클라이언트 인증서 검증 생략</span></label></div></details><div class="diagram"><svg id="diagram" viewBox="0 0 840 184" role="img" aria-labelledby="diagramTitle diagramDesc"></svg></div>
 <button id="run">캡처 및 전송</button></section>
 <section><h2>실험 결과</h2><div id="message" role="status"></div><div id="mapping"></div><div id="downloads" hidden><strong>실행 파일 저장</strong> <span id="captureId"></span><p id="files"></p><p id="decodeHelp" hidden></p></div><details><summary>응답 상세</summary><pre id="result" hidden></pre></details></section></main>
 <script>
@@ -131,7 +131,8 @@ function showDownloads(run,legs=['front','middle','back'],extras=[]){
  const help=el('decodeHelp');
  help.hidden=!extras.some(name=>name.endsWith('.keys')||name==='flows.mitm');
  const notes=[];
- if(extras.some(name=>name.endsWith('-decrypted.pcapng')))notes.push('복호화된 HTTP 패킷은 -decrypted.pcapng를 Wireshark에서 바로 여세요. TCP 분석에는 원본 PCAP을 사용하세요.');
+ if(extras.some(name=>name.endsWith('-plaintext.pcapng')))notes.push('TCP·HTTP·HTTP/2 Follow에는 -plaintext.pcapng를 여세요. TCP에는 TLS를 제거한 바이트가, HTTP/2에는 스트림별 헤더와 본문이 표시됩니다.');
+ if(extras.some(name=>name.endsWith('-decrypted.pcapng')))notes.push('새로 생성한 -decrypted.pcapng에는 원본 IP/TCP 패킷과 해당 실행의 TLS 키가 들어 있습니다. Wireshark에서 TCP 연결은 tcp.stream, 복호화된 요청은 HTTP/2 또는 TLS 스트림으로 추적하세요.');
  if(extras.includes('proxy.keys'))notes.push('Wireshark에서 middle 또는 back PCAP을 열고 TLS 설정의 키 로그 파일로 proxy.keys를 선택하세요.');
  else if(extras.includes('client.keys'))notes.push('Wireshark의 TLS 키 로그 파일로 client.keys를 선택하세요. 외부 MITM의 서버 측 연결에는 외부 프록시의 키가 필요합니다.');
  if(extras.includes('flows.mitm'))notes.push('flows.mitm은 mitmproxy에서 열어 요청과 응답을 확인할 수 있습니다.');

@@ -1,0 +1,12 @@
+captures/
+dist/
+__pycache__/
+.playwright-mcp/
+.stopped-workers.*
+images.tar.gz
+images.json
+*.pcap
+*.pcapng
+*.keys
+*.pem
+*.mitm

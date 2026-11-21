@@ -1,0 +1,192 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Envoy 경로 실험실</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5ee;color:#182e29;font:16px/1.6 "IBM Plex Sans",system-ui,sans-serif}main{max-width:930px;margin:50px auto;padding:0 20px}h1{font-size:36px;letter-spacing:-2px;margin:0 0 24px}h2{font-size:17px;margin:0 0 12px}section{border-top:1px solid #b3c4ba;padding:20px 0}button,select{font:inherit;border:1px solid #7d9186;background:white;color:inherit;border-radius:5px;padding:7px 12px}button{cursor:pointer}button:disabled{opacity:.6}#run{color:white;background:#145b47}label,button,a{margin-right:10px}#routeview{font:600 16px/1.7 monospace;color:#12624b}pre{overflow:auto;max-height:360px;background:white;padding:12px}a{color:#05624a}#message{min-height:1.6em}
+.diagram{overflow-x:auto;margin:16px 0 22px;background:#fff;border:1px solid #cbd5ce;border-radius:8px}.diagram svg{display:block;width:100%;min-width:660px;font:14px system-ui,sans-serif}.diagram text{fill:#183b31;text-anchor:middle}.diagram .file{font-weight:700;fill:#11664d}.diagram .port{font-size:12px}
+table{border-collapse:collapse;width:100%;margin-bottom:16px}th,td{text-align:left;padding:8px;border-bottom:1px solid #b3c4ba}caption{text-align:left;font-weight:bold;margin:12px 0}#mapping{overflow:auto}section{background:#fff;padding:18px 24px;margin:12px 0;border:1px solid #c9d4ce;border-radius:8px}input:not([type=checkbox]){font:inherit;max-width:95%;padding:6px;border:1px solid #7d9186;border-radius:4px}#clients,#servers{margin-top:10px}.diagram{border:0}#external input[type=number]{width:6em}#files button{margin-bottom:6px}details{margin-top:12px}[hidden]{display:none!important}#proxyChoices{display:flex;flex-wrap:wrap;gap:8px 14px;margin:16px 0;padding:10px 14px;border:1px solid #b3c4ba;border-radius:6px}#proxyChoices legend{font-weight:600}#proxyChoices label{cursor:pointer}.fields{display:flex;align-items:end;flex-wrap:wrap;gap:12px 18px}.fields label{display:grid;gap:3px;margin:0}.fields p{margin:0}.options{display:grid;gap:8px;padding:12px 0}summary{cursor:pointer;color:#145b47}#proxyChoices{border:0;padding:0}#proxyChoices legend{position:absolute;clip-path:inset(50%)}small{color:#435d51}#external{flex-basis:100%}</style><main><h1>HTTP 프록시 실험실</h1>
+<section><h2>대상 서버</h2><div class="fields"><label>대상 서버 <select id="targetMode"><option value="origin">실험용 Origin</option><option value="url">직접 입력한 URL</option></select></label>
+<label id="originSchemeLabel">Origin 연결 <select id="originScheme"><option value="http">평문 HTTP · 8000</option><option value="https">TLS (HTTPS) · 8443</option></select></label>
+<label id="instanceLabel">인스턴스 <select id="instance"><option value="">Origin 서비스 (자동)</option></select></label>
+<p id="urlField" hidden><label>서버 URL <input id="url" type="url" size="48" placeholder="https://server.example:8443/health"></label></p>
+</div></section><section><h2>경유 프록시</h2><fieldset id="proxyChoices"><legend>프록시 선택</legend>
+
+<label><input type="radio" name="via" value="mitm"> 내장 MITM 프록시</label>
+<label><input type="radio" name="via" value="external"> 외부 프록시</label>
+</fieldset>
+
+<div class="fields">
+
+
+<label id="mitmModeLabel" hidden>내장 MITM 방식 <select id="mitmMode"><option value="reverse">리버스 · 대상 사전 설정</option><option value="forward">포워드 · CONNECT</option></select></label>
+<label id="mitmListenerLabel" hidden>내장 MITM 리스너 <select id="mitmListener"><option value="">모드 기본값</option><option value="http">평문 TCP</option><option value="https">TLS</option></select></label>
+<div id="external" class="fields" hidden><label>외부 프록시 방식 <select id="externalMode"><option value="forward">포워드 · CONNECT</option><option value="reverse">리버스 · 대상 사전 설정</option></select></label><label id="listenerLabel" hidden>리버스 리스너 <select id="listenerScheme"><option value="">대상과 동일</option><option value="https">TLS (HTTPS)</option><option value="http">평문 HTTP</option></select></label><label>프록시 IP <input id="proxyIp" placeholder="192.168.1.10"></label><label>포트 <input id="proxyPort" type="number" min="1" max="65535" value="8080"></label></div>
+</div></section>
+<section><h2>요청 구성</h2><div class="fields"><label>요청 프로토콜 <select id="urlProtocol"><option>HTTP/1.1</option><option>HTTP/2</option></select></label><small id="h2Hint" hidden>내장 MITM에서 HTTP/2 요청은 TLS가 필요합니다.</small><label>클라이언트 수 <select id="n"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+<label id="serverCount">Origin 수 <select id="m"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+<button id="apply">대수 적용</button><label>클라이언트당 동시 요청 <select id="count"><option>1</option><option selected>4</option><option>8</option></select></label></div><details><summary>인스턴스 상태</summary><div id="clients"></div><div id="servers"></div></details></section>
+<section><h2>캡처 지점</h2><details id="tlsOptions" hidden><summary>TLS 검증 및 캡처 옵션</summary><div class="options"><label id="proxyVerifyLabel" hidden><input id="skipProxy" type="checkbox"> 이 실행에서 클라이언트의 MITM 인증서 검증 생략</label><label id="decryptOption"><input id="decrypt" type="checkbox" checked> 복호화된 HTTP 패킷 저장 (.pcapng)</label><label><input id="keylog" type="checkbox"> Wireshark용 TLS 키 저장</label><label id="upstreamVerifyLabel"><input id="skip" type="checkbox"> <span id="skipLabel">이 실행에서 클라이언트 인증서 검증 생략</span></label></div></details><div class="diagram"><svg id="diagram" viewBox="0 0 840 184" role="img" aria-labelledby="diagramTitle diagramDesc"></svg></div>
+<button id="run">캡처 및 전송</button></section>
+<section><h2>실험 결과</h2><div id="message" role="status"></div><div id="mapping"></div><div id="downloads" hidden><strong>실행 파일 저장</strong> <span id="captureId"></span><p id="files"></p><p id="decodeHelp" hidden></p></div><details><summary>응답 상세</summary><pre id="result" hidden></pre></details></section></main>
+<script>
+const el=id=>document.getElementById(id);
+let busy=false;
+async function api(path,body){
+ const res=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+ const data=await res.json(); if(!res.ok)throw Error(data.error);return data;
+}
+let activeClients=2;
+let selectedProxy='mitm';
+const proxyChoices=document.querySelectorAll('#proxyChoices input');
+for(const choice of proxyChoices){
+ choice.onchange=()=>{
+   selectedProxy=choice.value;
+
+   el('skip').checked=false;
+   pathView();
+ };
+}
+function pathView(){
+ const lab=el('targetMode').value==='origin';
+ for(const choice of proxyChoices)choice.checked=choice.value===selectedProxy;
+ el('serverCount').hidden=!lab;el('servers').hidden=!lab;
+ el('originSchemeLabel').hidden=!lab;el('urlField').hidden=lab;el('instanceLabel').hidden=!lab;
+ el('run').textContent='캡처 및 전송';
+
+   let target;
+   try{const u=new URL(lab?(el('originScheme').value==='https'?'https://origin:8443/':'http://origin:8000/'):el('url').value);if(['http:','https:'].includes(u.protocol))target=u;}catch{}
+   const reverseExternal=selectedProxy==='external' && el('externalMode').value==='reverse';
+   el('listenerLabel').hidden=!reverseExternal;
+   const builtin=selectedProxy==='mitm', builtinForward=builtin && el('mitmMode').value==='forward';
+   const builtinScheme=el('mitmListener').value||(builtinForward?'http':target?.protocol.slice(0,-1));
+   const tls=builtin ? builtinScheme==='https' : reverseExternal && el('listenerScheme').value ? el('listenerScheme').value==='https' : target?.protocol==='https:';
+   const noH2=builtin && (builtinForward ? target?.protocol!=='https:' : !tls);
+   el('urlProtocol').options[1].disabled=noH2;
+   if(noH2)el('urlProtocol').value='HTTP/1.1';
+   el('h2Hint').hidden=!noH2;
+   el('upstreamVerifyLabel').hidden=builtin && target?.protocol!=='https:';
+   const proxyCert=builtin && (tls || (builtinForward && target?.protocol==='https:'));
+   el('proxyVerifyLabel').hidden=!proxyCert;if(!proxyCert)el('skipProxy').checked=false;
+   const upstreamTls=builtin && target?.protocol==='https:';
+   el('skip').disabled=builtin?!upstreamTls:!tls;if(el('skip').disabled)el('skip').checked=false;
+   const host=lab?(el('instance').value||'Origin 서비스'):target?.hostname||'서버 URL 입력';
+   const port=target?.port||(target?.protocol==='https:'?'443':'80');
+   const svg=el('diagram');
+   const via=selectedProxy;
+   el('skipLabel').textContent=via==='mitm'?'이 실행에서 MITM → 서버 인증서 검증 생략':'이 실행에서 클라이언트의 상대 인증서 검증 생략';
+   const payload=target?el('urlProtocol').value+(tls?' over TLS':' · 평문'):'서버 URL 입력 대기';
+   const forward=el(via==='mitm'?'mitmMode':'externalMode').value==='forward';
+   el('mitmModeLabel').hidden=el('mitmListenerLabel').hidden=!builtin;
+   const label={mitm:forward?'내장 포워드':'내장 리버스',external:forward?'외부 포워드':'외부 리버스'}[via];
+   el('decryptOption').hidden=via!=='mitm';el('external').hidden=via!=='external';el('tlsOptions').hidden=!(tls||upstreamTls);
+   if(!tls&&!upstreamTls)el('keylog').checked=false;
+   const nodes=[[85,'클라이언트 × '+activeClients],[295,'Envoy'],[485,label],[715,'']];
+   svg.innerHTML='<title id="diagramTitle">입력 URL 연결 경로</title><desc id="diagramDesc"></desc>';
+   nodes.forEach(([x,name],i)=>{
+     const w=i===nodes.length-1?230:134;
+     if(i){const left=nodes[i-1][0]+67,right=x-w/2, center=(left+right)/2;
+       const last=i===nodes.length-1;
+       let setup='', protocol=payload;
+       if(i===1)setup='HTTP/1.1 CONNECT';
+       if(['external','mitm'].includes(via) && i===2)setup=forward?'두 번째 CONNECT':(target?(tls?'바로 TLS 핸드셰이크':'바로 HTTP 요청'):'두 번째 CONNECT 없음');
+       if(builtinForward && i===2){setup=tls?'TLS → CONNECT':'평문 CONNECT';protocol=el('urlProtocol').value+(upstreamTls?' · 터널 내 TLS':' · 터널 내 평문');}
+       if(via==='mitm' && last)protocol=!target?'서버 URL 입력 대기':upstreamTls?'TLS · HTTP 버전 협상':'평문 HTTP · 프록시가 선택';
+       if(via==='external' && last)protocol='외부 프록시 설정에 따름';
+       svg.insertAdjacentHTML('beforeend',`<g class="hopProtocol"><text x="${center}" y="25" class="port">${setup}</text><text x="${center}" y="45">${protocol}</text></g>`);
+       svg.insertAdjacentHTML('beforeend',`<path d="M${left} 78 H${right} m-8 -5 l8 5 -8 5" fill="none" stroke="#698679" stroke-width="2"/><text class="file" x="${(left+right)/2}" y="116">${i===1?'front.pcap':i===nodes.length-1?(via==='external'?'외부 구간':'back.pcap'):'middle.pcap'}</text>`);}
+     svg.insertAdjacentHTML('beforeend',`<rect x="${x-w/2}" y="56" width="${w}" height="44" rx="7" fill="#e4efe8"/><text x="${x}" y="83"></text>`);
+     svg.lastElementChild.textContent=name||(host.length>27?host.slice(0,25)+'…':host);
+   });
+   svg.insertAdjacentHTML('beforeend',`<text x="420" y="140">${target?(target.protocol==='https:'?'HTTPS':'HTTP')+' GET · '+el('urlProtocol').value+' · 대상 포트 '+port+' · ':''}${tls?'TLS 암호화 패킷 수집':'TCP 패킷 수집'}</text>`);
+   if((builtin||via==='external') && (tls||upstreamTls))svg.insertAdjacentHTML('beforeend','<text x="420" y="165" class="port">Envoy는 TLS를 전달하며 프록시 인증서 검사는 클라이언트가 수행합니다.</text>');
+   el('diagramDesc').textContent='클라이언트 → Envoy → '+label+' → '+host;
+
+}
+function showMapping(data){
+ const area=el('mapping');area.replaceChildren();
+ const rows=(data.responses||[]).filter(r=>r.server_ip);
+ if(!rows.length)return;
+ const names=new Map(Object.entries(data.server_names||{}));
+ for(const r of rows)if(!names.has(r.server_ip)){
+   // Earlier captures used the Compose origin container ID as its hostname.
+   names.set(r.server_ip,/^[a-f0-9]{12}$/.test(r.server)?'origin-1':r.server);
+ }
+ const servers=[...names].sort((a,b)=>a[1].localeCompare(b[1]));
+ const table=document.createElement('table');
+ table.createCaption().textContent='클라이언트별 처리 서버 · 셀 안의 숫자는 요청 번호';
+ const head=table.createTHead().insertRow();
+ for(const title of ['클라이언트',...servers.map(([ip,name])=>name+' ('+ip+')')]){
+   const th=document.createElement('th');th.scope='col';th.textContent=title;head.append(th);
+ }
+ const body=table.createTBody();
+ for(const client of [...new Set(rows.map(r=>r.client))].sort()){
+   const tr=body.insertRow(),th=document.createElement('th');th.scope='row';th.textContent=client;tr.append(th);
+   for(const [ip] of servers){
+     const ids=rows.filter(r=>r.client===client&&r.server_ip===ip).map(r=>Number(r.path.split('/').pop())).sort((a,b)=>a-b);
+     tr.insertCell().textContent=ids.length?ids.map(id=>'#'+id).join(', '):'—';
+   }
+ }
+ area.append(table);
+}
+function showDownloads(run,legs=['front','middle','back'],extras=[]){
+ if(!run)return;
+ const help=el('decodeHelp');
+ help.hidden=!extras.some(name=>name.endsWith('.keys')||name==='flows.mitm');
+ const notes=[];
+ if(extras.some(name=>name.endsWith('-decrypted.pcapng')))notes.push('복호화된 HTTP 패킷은 -decrypted.pcapng를 Wireshark에서 바로 여세요. TCP 분석에는 원본 PCAP을 사용하세요.');
+ if(extras.includes('proxy.keys'))notes.push('Wireshark에서 middle 또는 back PCAP을 열고 TLS 설정의 키 로그 파일로 proxy.keys를 선택하세요.');
+ else if(extras.includes('client.keys'))notes.push('Wireshark의 TLS 키 로그 파일로 client.keys를 선택하세요. 외부 MITM의 서버 측 연결에는 외부 프록시의 키가 필요합니다.');
+ if(extras.includes('flows.mitm'))notes.push('flows.mitm은 mitmproxy에서 열어 요청과 응답을 확인할 수 있습니다.');
+ help.textContent=notes.join(' ');
+ el('captureId').textContent=run;el('files').replaceChildren();
+ for(const leg of [...legs,...extras]){
+   const button=document.createElement('button');
+   button.textContent=(legs.includes(leg)?leg+'.pcap':leg)+' 저장';
+   button.onclick=async()=>{
+     button.disabled=true;el('message').textContent='저장할 폴더와 파일 이름을 선택하세요.';
+     try{
+       const response=await fetch('http://127.0.0.1:8766/save-as',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run,leg})});
+       const result=await response.json();
+       if(!response.ok)throw Error(result.error||'파일 저장 실패');
+       el('message').textContent=result.path?'저장 완료: '+result.path:'저장을 취소했습니다.';
+     }catch(e){el('message').textContent=e instanceof TypeError?'저장 도우미에 연결할 수 없습니다. 실행 폴더의 captures에서 결과 파일을 확인하세요.':e.message;}
+     finally{button.disabled=false;}
+   };
+   el('files').append(button);
+ }
+ el('downloads').hidden=false;
+}
+async function refresh(){
+ const topology=await api('/topology');const prior=el('instance').value;el('instance').replaceChildren(new Option('Origin 서비스 (자동)',''));
+ for(const name of Object.keys(topology.servers))el('instance').add(new Option(name,name));
+ el('instance').value=Object.hasOwn(topology.servers,prior)?prior:'';
+ const states=topology.clients;activeClients=Object.values(states).filter(v=>v==='running').length;el('n').value=Object.keys(states).length;el('m').value=Object.keys(topology.servers).length;el('servers').textContent=Object.entries(topology.servers).map(([name,state])=>name+' · '+state).join('　');el('clients').replaceChildren();pathView();
+ for(const [service,state] of Object.entries(states)){
+ const b=document.createElement('button'); const running=state==='running';
+ b.textContent=service+' · '+state+' · '+(running?'중지':'시작');
+ b.onclick=()=>work(async()=>{await api('/client',{service,action:running?'stop':'start'});el('message').textContent=service+' 상태 변경 완료';});el('clients').append(b);
+ }
+}
+async function work(fn){
+ if(busy)return;busy=true;document.querySelectorAll('button,select,#proxyChoices input').forEach(e=>e.disabled=true);
+ try{await fn();}catch(e){el('message').textContent=e.message;}
+ finally{try{await refresh();}catch(e){el('message').textContent=e.message;}
+ busy=false;document.querySelectorAll('button,select,#proxyChoices input').forEach(e=>e.disabled=false);}
+}
+el('apply').onclick=()=>work(async()=>{await api('/scale',{clients:Number(el('n').value),servers:Number(el('m').value)});el('message').textContent='대수를 적용했습니다.';});
+el('targetMode').onchange=()=>{el('skip').checked=false;pathView();};el('originScheme').onchange=()=>{el('skip').checked=false;pathView();};el('instance').onchange=pathView;el('mitmMode').onchange=pathView;el('mitmListener').onchange=pathView;el('externalMode').onchange=pathView;el('listenerScheme').onchange=pathView;el('urlProtocol').onchange=pathView;el('url').oninput=pathView;el('n').onchange=()=>{activeClients=Number(el('n').value);pathView();};el('m').onchange=pathView;
+el('run').onclick=()=>work(async()=>{
+
+   const lab=el('targetMode').value==='origin';
+   const url=el('url').value.trim();
+   if(!lab&&(!/^https?:\/\//i.test(url)||!el('url').checkValidity()))throw Error('http:// 또는 https:// 서버 URL을 입력하세요.');
+   const skipProxy=el('skipProxy').checked;el('skipProxy').checked=false;const skip=el('skip').checked;el('skip').checked=false;
+   el('mapping').replaceChildren();el('downloads').hidden=true;el('result').hidden=true;
+   el('message').textContent='클라이언트에서 URL로 요청 중…';
+   const d=await api('/direct',{url,target_mode:lab?'origin':'url',origin:lab?el('instance').value:'',...(lab?{servers:Number(el('m').value),origin_scheme:el('originScheme').value}:{}),via:selectedProxy,protocol:el('urlProtocol').value,decrypt:el('decrypt').checked,keylog:el('keylog').checked,mitm_listener:el('mitmListener').value,mitm_mode:el('mitmMode').value,external_mode:el('externalMode').value,listener_scheme:el('listenerScheme').value,proxy_ip:el('proxyIp').value.trim(),proxy_port:Number(el('proxyPort').value),skip_proxy_verify:skipProxy,skip_verify:skip,count:Number(el('count').value),clients:Number(el('n').value)});
+   el('result').textContent=JSON.stringify(d,null,2);el('result').hidden=false;
+   showDownloads(d.run,d.legs,d.extras);
+   const received=d.responses.filter(r=>r.status).length;
+   el('message').textContent=d.via+' · '+d.protocol+' · HTTP 응답 '+received+'개 · 연결 오류 '+(d.responses.length-received)+'개';
+
+});
+pathView();api('/captures/latest').then(d=>{if(d.run&&el('downloads').hidden){showMapping(d);showDownloads(d.run,d.legs,d.extras);}}).catch(e=>el('message').textContent=e.message);refresh().catch(e=>el('message').textContent=e.message);
+</script></html>

@@ -2,7 +2,7 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f5ee;color:#182e29;font:16px/1.6 "IBM Plex Sans",system-ui,sans-serif}main{max-width:930px;margin:50px auto;padding:0 20px}h1{font-size:36px;letter-spacing:-2px;margin:0 0 24px}h2{font-size:17px;margin:0 0 12px}section{border-top:1px solid #b3c4ba;padding:20px 0}button,select{font:inherit;border:1px solid #7d9186;background:white;color:inherit;border-radius:5px;padding:7px 12px}button{cursor:pointer}button:disabled{opacity:.6}#run{color:white;background:#145b47}label,button,a{margin-right:10px}#routeview{font:600 16px/1.7 monospace;color:#12624b}pre{overflow:auto;max-height:360px;background:white;padding:12px}a{color:#05624a}#message{min-height:1.6em}
 .diagram{overflow-x:auto;margin:16px 0 22px;background:#fff;border:1px solid #cbd5ce;border-radius:8px}.diagram svg{display:block;width:100%;min-width:660px;font:14px system-ui,sans-serif}.diagram text{fill:#183b31;text-anchor:middle}.diagram .file{font-weight:700;fill:#11664d}.diagram .port{font-size:12px}
-table{border-collapse:collapse;width:100%;margin-bottom:16px}th,td{text-align:left;padding:8px;border-bottom:1px solid #b3c4ba}caption{text-align:left;font-weight:bold;margin:12px 0}#mapping{overflow:auto}section{background:#fff;padding:18px 24px;margin:12px 0;border:1px solid #c9d4ce;border-radius:8px}input:not([type=checkbox]){font:inherit;max-width:95%;padding:6px;border:1px solid #7d9186;border-radius:4px}#clients,#servers{margin-top:10px}.diagram{border:0}#external input[type=number]{width:6em}#files button{margin-bottom:6px}details{margin-top:12px}[hidden]{display:none!important}#proxyChoices{display:flex;flex-wrap:wrap;gap:8px 14px;margin:16px 0;padding:10px 14px;border:1px solid #b3c4ba;border-radius:6px}#proxyChoices legend{font-weight:600}#proxyChoices label{cursor:pointer}.fields{display:flex;align-items:end;flex-wrap:wrap;gap:12px 18px}.fields label{display:grid;gap:3px;margin:0}.fields p{margin:0}.options{display:grid;gap:8px;padding:12px 0}summary{cursor:pointer;color:#145b47}#proxyChoices{border:0;padding:0}#proxyChoices legend{position:absolute;clip-path:inset(50%)}small{color:#435d51}#external{flex-basis:100%}</style><main><h1>HTTP 프록시 실험실</h1>
+table{border-collapse:collapse;width:100%;margin-bottom:16px}th,td{text-align:left;padding:8px;border-bottom:1px solid #b3c4ba}caption{text-align:left;font-weight:bold;margin:12px 0}#mapping{overflow:auto}section{background:#fff;padding:18px 24px;margin:12px 0;border:1px solid #c9d4ce;border-radius:8px}input:not([type=checkbox]){font:inherit;max-width:95%;padding:6px;border:1px solid #7d9186;border-radius:4px}#clients,#servers{margin-top:10px}.diagram{border:0}#external input[type=number]{width:6em}#files button{margin-bottom:6px}details{margin-top:12px}[hidden]{display:none!important}#proxyChoices{display:flex;flex-wrap:wrap;gap:8px 14px;margin:16px 0;padding:10px 14px;border:1px solid #b3c4ba;border-radius:6px}#proxyChoices legend{font-weight:600}#proxyChoices label{cursor:pointer}.fields{display:flex;align-items:end;flex-wrap:wrap;gap:12px 18px}.fields label{display:grid;gap:3px;margin:0}.fields p{margin:0}.options{display:grid;gap:8px;padding:12px 0}summary{cursor:pointer;color:#145b47}#proxyChoices{border:0;padding:0}#proxyChoices legend{position:absolute;clip-path:inset(50%)}small{color:#435d51}#external{flex-basis:100%}.download-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:5px 0;border-bottom:1px solid #dae1dc}#files .download-row button{margin:0;font-size:14px}</style><main><h1>HTTP 프록시 실험실</h1>
 <section><h2>대상 서버</h2><div class="fields"><label>대상 서버 <select id="targetMode"><option value="origin">실험용 Origin</option><option value="url">직접 입력한 URL</option></select></label>
 <label id="originSchemeLabel">Origin 연결 <select id="originScheme"><option value="http">평문 HTTP · 8000</option><option value="https">TLS (HTTPS) · 8443</option></select></label>
 <label id="instanceLabel">인스턴스 <select id="instance"><option value="">Origin 서비스 (자동)</option></select></label>
@@ -143,19 +143,30 @@ function showDownloads(run,legs=['front','middle','back'],extras=[]){
    const link=document.createElement('a');
    link.href='/pcap/'+encodeURIComponent(run)+'/'+encodeURIComponent(name);
    link.download=run+'-'+name;
-   link.textContent=name+' 저장';
-   link.onclick=async event=>{
-     if(!window.showSaveFilePicker)return;
-     event.preventDefault();
-     try {
-       const file=await window.showSaveFilePicker({suggestedName:link.download});
-       const response=await fetch(link.href);
-       if(!response.ok)throw Error('파일을 가져올 수 없습니다.');
-       await response.body.pipeTo(await file.createWritable());
-       el('message').textContent='저장 완료 · '+file.name;
-     }catch(e){el('message').textContent=e.name==='AbortError'?'저장을 취소했습니다.':e.message;}
-   };
-   el('files').append(link);
+   link.textContent=name+' 다운로드';
+   const row=document.createElement('span');
+   row.className='download-row';
+   row.append(link);
+   if(typeof window.showSaveFilePicker==='function'){
+     const save=document.createElement('button');
+     save.type='button';
+     save.textContent='다른 이름으로 저장';
+     save.setAttribute('aria-label',name+' 다른 이름으로 저장');
+     save.onclick=async()=>{
+       try{
+         const file=await window.showSaveFilePicker({suggestedName:link.download});
+         const response=await fetch(link.href);
+         if(!response.ok)throw Error('파일을 가져올 수 없습니다. HTTP '+response.status);
+         await response.body.pipeTo(await file.createWritable());
+         el('message').textContent='저장 완료 · '+file.name;
+       }catch(e){
+         const reason=e.name==='AbortError'?'저장 창이 닫혔습니다.':'저장 창을 사용할 수 없습니다. '+e.message;
+         el('message').textContent=reason+' 파일명 옆 다운로드 링크로도 저장할 수 있습니다.';
+       }
+     };
+     row.append(save);
+   }
+   el('files').append(row);
  }
  el('downloads').hidden=false;
 }

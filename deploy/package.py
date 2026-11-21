@@ -31,9 +31,9 @@ def bundle():
         raise ValueError("Select a Linux container engine")
     docker("compose", "build", "ui")
     config = (ROOT / "compose.yaml").read_text(encoding="utf-8")
-    if config.count("  build: .\n") != 1:
+    if config.count("  build: ./app\n") != 1:
         raise ValueError("Review Compose build entries before offline export")
-    config = config.replace("  build: .\n", "")
+    config = config.replace("  build: ./app\n", "")
     tags = set(docker("compose", "config", "--images", output=True).splitlines())
     images = {}
     for tag in sorted(tags):
@@ -63,14 +63,18 @@ def bundle():
         with ZipFile(pending, "w", compression=ZIP_STORED) as z:
             for name in ("images.tar.gz", "images.manifest", "compose.yaml"):
                 z.write(stage / name, name)
-            files = ["envoy.yaml", "nginx.conf", "mitm_run.py", "deploy/common.ps1",
-                     "deploy/common.sh", "OFFLINE.md", "README.md"]
-            files += [f"{action}-lab.{ext}" for action in ("install","start","stop") for ext in ("ps1","sh")]
-            for name in files:
-                info = ZipInfo.from_file(ROOT / name, name)
+            files = [(name, name) for name in ("proxy/envoy.yaml", "proxy/nginx.conf",
+                     "proxy/mitm_run.py", "proxy/mitm_routes.py", "deploy/common.ps1",
+                     "deploy/common.sh", "docs/OFFLINE.md", "README.md")]
+            for action in ("install", "start", "stop"):
+                for platform_dir, ext in (("windows", "ps1"), ("linux", "sh")):
+                    name = f"{action}-lab.{ext}"
+                    files.append((f"deploy/{platform_dir}/{name}", name))
+            for source, name in files:
+                info = ZipInfo.from_file(ROOT / source, name)
                 info.create_system = 3
                 info.external_attr = (0o100755 if name.endswith(".sh") else 0o100644) << 16
-                z.writestr(info, (ROOT / name).read_bytes())
+                z.writestr(info, (ROOT / source).read_bytes())
         pending.replace(output)
         print(output)
 

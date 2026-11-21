@@ -17,6 +17,10 @@ with tempfile.TemporaryDirectory() as conf:
     listener = "regular" if mode == "forward" else "reverse:" + upstream
     command = ["mitmdump", "--mode", listener, "--listen-port", "8082",
                "--set", "confdir=" + conf, "--set", "keep_host_header=true"]
+    if mode == "reverse":
+        env["LAB_REVERSE_ROUTES"] = str(folder / "reverse-routes.json")
+        command.extend(["-s", "/lab/mitm_routes.py", "--set", "connection_strategy=lazy",
+                        "--set", "upstream_cert=false"])
     if (folder/"origin-trust.pem").exists():
         command.extend(["--set", "ssl_verify_upstream_trusted_ca=" + str(folder/"origin-trust.pem")])
     if insecure == "yes":

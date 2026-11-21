@@ -1,8 +1,12 @@
-. "$PSScriptRoot/deploy/common.ps1"
-Push-Location $PSScriptRoot
+$labRoot = $PSScriptRoot
+if (!(Test-Path -LiteralPath "$labRoot/compose.yaml")) {
+    $labRoot = (Resolve-Path "$PSScriptRoot/../..").Path
+}
+. "$labRoot/deploy/common.ps1"
+Push-Location $labRoot
 try {
     Confirm-LabDirectory
-    if (Test-Path Dockerfile) { Invoke-LabDocker compose build ui }
+    if (Test-Path app/Dockerfile) { Invoke-LabDocker compose build ui }
     New-Item -ItemType Directory -Force captures | Out-Null
     Invoke-LabDocker compose up -d --pull never --no-build
     if (Test-Path .stopped-workers.json) {

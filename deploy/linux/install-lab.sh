@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
+if [[ ! -f compose.yaml ]]; then cd ../..; fi
 exec 3<images.manifest
 read -r key checksum <&3
 [[ $key == sha256 ]]

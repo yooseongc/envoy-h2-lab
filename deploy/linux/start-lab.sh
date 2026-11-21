@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
+if [[ ! -f compose.yaml ]]; then cd ../..; fi
 source deploy/common.sh
 check_project
-if [[ -f Dockerfile ]]; then docker compose build ui; fi
+if [[ -f app/Dockerfile ]]; then docker compose build ui; fi
 mkdir -p captures
 docker compose up -d --pull never --no-build
 if [[ -f .stopped-workers.json ]]; then

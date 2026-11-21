@@ -212,7 +212,8 @@ def direct_request(body):
         raise ValueError("지원하지 않는 HTTP 버전입니다.")
     if "clients" in body:
         scale("client", body["clients"])
-    active = [(name, c) for name,c in workers("client").items() if c.status == "running"]
+    clients = workers("client")
+    active = [(name, c) for name,c in clients.items() if c.status == "running"]
     if not active:
         raise ValueError("실행 중인 클라이언트가 없습니다.")
     via = body.get("via", "mitm")
@@ -248,9 +249,29 @@ def direct_request(body):
     has_tls = upstream_tls or listener == "https" or target.scheme == "https"
     keys = keys and has_tls
     decrypt = via == "mitm" and has_tls and body.get("decrypt", True) is True
+    client_hosts = {name: target.netloc for name, _ in active}
+    routes = {target.netloc.lower(): [target.scheme, target.hostname, port]}
+    client_origins = body.get("client_origins", {})
+    if not isinstance(client_origins, dict):
+        raise ValueError("클라이언트별 Origin 설정을 확인하세요.")
+    if mode == "origin" and mitm_mode == "reverse":
+        instances = sorted(pool)
+        for key, value in client_origins.items():
+            if key not in clients or value not in instances:
+                raise ValueError("등록된 클라이언트와 Origin을 선택하세요.")
+        routes = {}
+        for name in instances:
+            addr = pool[name].attrs["NetworkSettings"]["Networks"][project+"_back"]["IPAddress"]
+            routes[f"{name}:{port}"] = [target.scheme, addr, port]
+        for name, _ in active:
+            index = int(name.split("-")[-1]) - 1
+            selected = client_origins.get(name) or instance or instances[index % len(instances)]
+            client_hosts[name] = f"{selected}:{port}"
+    elif client_origins:
+        raise ValueError("클라이언트별 Origin은 내장 리버스 모드에서 선택하세요.")
     origin_trust = ""
     if mode == "origin" and via != "external" and scheme == "https" and not skip:
-        for replica in ([pool[instance or "origin-1"]] if instance or via == "external" else pool.values()):
+        for replica in ([pool[instance or "origin-1"]] if instance and mitm_mode != "reverse" else pool.values()):
             wait_until(lambda: replica.exec_run(["test","-s","/tmp/lab-origin.pem"]).exit_code == 0,
                        10, "Origin TLS 인증서 준비 시간 초과")
             code, cert = replica.exec_run(["cat","/tmp/lab-origin.pem"])
@@ -260,7 +281,7 @@ def direct_request(body):
     def invoke(item):
         name, worker = item
         code, output = worker.exec_run(["python", "-c", program, name, url, start, str(count),
-                                        str(FRONT_PORT), mode])
+                                        str(FRONT_PORT), mode, client_hosts[name]])
         if code:
             raise RuntimeError(f"{name}: HTTP 요청 프로그램 실행 실패")
         return json.loads(output)
@@ -268,6 +289,8 @@ def direct_request(body):
     folder = root / run
     folder.mkdir()
     plan = {"front":("front",FRONT_PORT,"receive")}
+    if mitm_mode == "reverse":
+        (folder/"reverse-routes.json").write_text(json.dumps(routes, indent=2))
     if via=="mitm":
         plan.update(middle=("mitm",8082,"receive"), back=("mitm",port,"send"))
         route_context = mitm_url_hop(target,folder,skip,keys or decrypt,mitm_mode)
@@ -281,7 +304,7 @@ def direct_request(body):
         plan["back"] = ("front",port,"send")
         route_context = nullcontext((target.hostname,port))
     (folder / "manifest.json").write_text(json.dumps(dict(route="url",target_mode=mode,origin=body.get("origin") or None,via=via,external_mode=external_mode,mitm_mode=mitm_mode,host=target.hostname,
-        skip_proxy_verify=skip_proxy, skip_verify=skip, protocol=protocol, target_url=url, listener_scheme=listener, front_protocol='HTTP/1.1 plain', capture_plan=plan),indent=2))
+        skip_proxy_verify=skip_proxy, skip_verify=skip, protocol=protocol, target_url=url, listener_scheme=listener, front_protocol='HTTP/1.1 plain', client_hosts=client_hosts, capture_plan=plan),indent=2))
     if origin_trust and via == "mitm":
         (folder/"origin-trust.pem").write_text(origin_trust)
     decrypted_files = []

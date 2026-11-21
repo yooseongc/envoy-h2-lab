@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
+if [[ ! -f compose.yaml ]]; then cd ../..; fi
 source deploy/common.sh
 check_project
 running=$(worker_ids -q)

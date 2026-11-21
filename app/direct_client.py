@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-client, url, start, count, front_port, mode = sys.argv[1:]
+client, url, start, count, front_port, mode, authority = sys.argv[1:]
 target = urlsplit(url)
 path = target.path or "/"
 if target.query:
@@ -17,11 +17,11 @@ def send(number):
     conn = http.client.HTTPConnection("envoy", int(front_port), timeout=25)
     time.sleep(max(0, float(start) - time.time()))
     began = time.monotonic()
-    row = dict(client=client, request=number)
+    row = dict(client=client, request=number, authority=authority)
     try:
         conn.connect()
         row["client_ip"] = conn.sock.getsockname()[0]
-        conn.request("GET", path, headers={"Host": target.netloc, "X-Lab-Client": client,
+        conn.request("GET", path, headers={"Host": authority, "X-Lab-Client": client,
                                           "X-Lab-Request": str(number)})
         with conn.getresponse() as response:
             row.update(status=response.status, response_protocol="HTTP/1.1")

@@ -1,5 +1,9 @@
-. "$PSScriptRoot/deploy/common.ps1"
-Push-Location $PSScriptRoot
+$labRoot = $PSScriptRoot
+if (!(Test-Path -LiteralPath "$labRoot/compose.yaml")) {
+    $labRoot = (Resolve-Path "$PSScriptRoot/../..").Path
+}
+. "$labRoot/deploy/common.ps1"
+Push-Location $labRoot
 try {
     $manifest = @{}
     foreach ($line in (Get-Content images.manifest)) {

@@ -1,10 +1,21 @@
-$ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/deploy/common.ps1"
 Push-Location $PSScriptRoot
 try {
-    if (-not (Test-Path -LiteralPath 'images.json')) {
-        docker compose build ui
-        if ($LASTEXITCODE -ne 0) { throw "Development build failed." }
+    Confirm-LabDirectory
+    if (Test-Path Dockerfile) { Invoke-LabDocker compose build ui }
+    New-Item -ItemType Directory -Force captures | Out-Null
+    Invoke-LabDocker compose up -d --pull never --no-build
+    if (Test-Path .stopped-workers.json) {
+        $owned = @(Get-LabWorkers)
+        foreach ($id in (Get-SavedWorkers)) {
+            if ($id -in $owned) { Invoke-LabDocker start $id }
+        }
+        Remove-Item -LiteralPath .stopped-workers.json
     }
-    python deploy/lab.py start
-    if ($LASTEXITCODE -ne 0) { throw "Lab start failed." }
+    foreach ($attempt in 1..60) {
+        try { $state = Invoke-RestMethod http://127.0.0.1:8765/topology -TimeoutSec 2 } catch { $state = $null }
+        if ($null -ne $state.clients) { Write-Output 'UI: http://127.0.0.1:8765'; return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw 'UI startup timed out. Inspect docker compose logs ui.'
 } finally { Pop-Location }

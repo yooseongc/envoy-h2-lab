@@ -138,19 +138,23 @@ function showDownloads(run,legs=['front','middle','back'],extras=[]){
  help.textContent=notes.join(' ');
  el('captureId').textContent=run;el('files').replaceChildren();
  for(const leg of [...legs,...extras]){
-   const button=document.createElement('button');
-   button.textContent=(legs.includes(leg)?leg+'.pcap':leg)+' 저장';
-   button.onclick=async()=>{
-     button.disabled=true;el('message').textContent='저장할 폴더와 파일 이름을 선택하세요.';
-     try{
-       const response=await fetch('http://127.0.0.1:8766/save-as',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run,leg})});
-       const result=await response.json();
-       if(!response.ok)throw Error(result.error||'파일 저장 실패');
-       el('message').textContent=result.path?'저장 완료: '+result.path:'저장을 취소했습니다.';
-     }catch(e){el('message').textContent=e instanceof TypeError?'저장 도우미에 연결할 수 없습니다. 실행 폴더의 captures에서 결과 파일을 확인하세요.':e.message;}
-     finally{button.disabled=false;}
+   const name=legs.includes(leg)?leg+'.pcap':leg;
+   const link=document.createElement('a');
+   link.href='/pcap/'+encodeURIComponent(run)+'/'+encodeURIComponent(name);
+   link.download=run+'-'+name;
+   link.textContent=name+' 저장';
+   link.onclick=async event=>{
+     if(!window.showSaveFilePicker)return;
+     event.preventDefault();
+     try {
+       const file=await window.showSaveFilePicker({suggestedName:link.download});
+       const response=await fetch(link.href);
+       if(!response.ok)throw Error('파일을 가져올 수 없습니다.');
+       await response.body.pipeTo(await file.createWritable());
+       el('message').textContent='저장 완료 · '+file.name;
+     }catch(e){el('message').textContent=e.name==='AbortError'?'저장을 취소했습니다.':e.message;}
    };
-   el('files').append(button);
+   el('files').append(link);
  }
  el('downloads').hidden=false;
 }

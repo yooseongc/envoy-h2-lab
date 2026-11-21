@@ -4,6 +4,7 @@ import tarfile
 import ipaddress
 from contextlib import contextmanager, nullcontext
 import os
+import shutil
 import re
 import threading
 import time
@@ -420,12 +421,27 @@ class Handler(BaseHTTPRequestHandler):
                                       server_names=manifest.get("server_names", {}))
                     return self.reply(200, result)
             return self.reply(200, {"run":None})
-        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/(front|middle|back)\.pcap",self.path)
+        match = re.fullmatch(r"/pcap/(\d{8}T\d{6}Z-[0-9a-f]{8})/((?:front|middle|back)\.pcap|(?:middle|back)-decrypted\.pcapng|(?:client|proxy)\.keys|flows\.mitm)", self.path)
         if match:
-            run, leg = match.groups()
-            file = root / run / (leg+".pcap")
-            if file.exists() and (file.parent/(leg+".done")).exists():
-                return self.reply(200,file.read_bytes(),"application/vnd.tcpdump.pcap", f"{run}-{leg}.pcap")
+            run, name = match.groups()
+            folder = root / run
+            file = folder / name
+            if name.endswith(".pcap"):
+                ready = file.with_suffix(".done").is_file()
+            else:
+                result = folder / "url-result.json"
+                ready = result.is_file() and name in json.loads(result.read_text()).get("extras", [])
+            if ready and file.is_file() and self.headers.get("Sec-Fetch-Site") != "cross-site":
+                with file.open("rb") as source:
+                    self.send_response(200)
+                    self.send_header("Content-Disposition", f'attachment; filename="{run}-{name}"')
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(os.fstat(source.fileno()).st_size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    shutil.copyfileobj(source, self.wfile)
+                return
         self.reply(404,{"error":"unknown path"})
 
     def do_POST(self):

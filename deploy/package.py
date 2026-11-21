@@ -1,5 +1,6 @@
 """Build a portable offline ZIP for the current Linux Docker engine architecture."""
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -7,7 +8,21 @@ import subprocess
 import tempfile
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from lab import ROOT, digest, docker
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def docker(*args, output=False):
+    result = subprocess.run(["docker", *args], cwd=ROOT, check=True, text=True,
+                            stdout=subprocess.PIPE if output else None)
+    return result.stdout.strip() if output else None
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open("rb") as data:
+        for block in iter(lambda: data.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def bundle():
@@ -40,16 +55,16 @@ def bundle():
                 shutil.copyfileobj(proc.stdout, compressed, 1024 * 1024)
                 if proc.wait():
                     raise RuntimeError("docker save failed")
-        (stage / "images.json").write_text(json.dumps(dict(platform=platform, images=images,
-            sha256=digest(archive)), indent=2))
+        manifest = [f"sha256 {digest(archive)}", f"platform {platform}", *[f"{tag} {image}" for tag, image in images.items()]]
+        (stage / "images.manifest").write_bytes(("\n".join(manifest) + "\n").encode("ascii"))
         (stage / "compose.yaml").write_text(config, encoding="utf-8")
         output = dist / ("envoy-h2-lab-" + platform.replace("/", "-") + ".zip")
         pending = stage / "bundle.zip"
         with ZipFile(pending, "w", compression=ZIP_STORED) as z:
-            for name in ("images.tar.gz", "images.json", "compose.yaml"):
+            for name in ("images.tar.gz", "images.manifest", "compose.yaml"):
                 z.write(stage / name, name)
-            files = ["envoy.yaml", "nginx.conf", "mitm_run.py", "deploy/lab.py",
-                     "windows/save_capture.py", "OFFLINE.md"]
+            files = ["envoy.yaml", "nginx.conf", "mitm_run.py", "deploy/common.ps1",
+                     "deploy/common.sh", "OFFLINE.md", "README.md"]
             files += [f"{action}-lab.{ext}" for action in ("install","start","stop") for ext in ("ps1","sh")]
             for name in files:
                 info = ZipInfo.from_file(ROOT / name, name)

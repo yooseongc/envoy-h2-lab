@@ -54,10 +54,16 @@ def listener(name, host, port, kind, config):
 
 @contextmanager
 def upstream_router(engine, base, tap, project, front_ip, target, hop, port, protocol,
-                    forward, listener_tls, ca, skip, keylog, ready):
+                    forward, listener_tls, ca, skip, keylog, access_log, ready):
     target_port = target.port or (443 if target.scheme == "https" else 80)
     http = {"@type": PREFIX + "extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
             "stat_prefix": "requests", "codec_type": "HTTP1", "use_remote_address": True,
+            "access_log": [{"name": "envoy.access_loggers.file", "typed_config": {
+                "@type": PREFIX + "extensions.access_loggers.file.v3.FileAccessLog",
+                "path": str(access_log), "log_format": {"json_format": {
+                    "client": "%REQ(X-LAB-CLIENT)%", "request": "%REQ(X-LAB-REQUEST)%",
+                    "flags": "%RESPONSE_FLAGS%", "details": "%RESPONSE_CODE_DETAILS%",
+                    "transport": "%UPSTREAM_TRANSPORT_FAILURE_REASON%"}}}}],
             "route_config": {"name": "run", "virtual_hosts": [{"name": "origin", "domains": ["*"],
                 "routes": [{"match": {"prefix": "/"}, "route": {"cluster": "requests", "timeout": "20s"}}]}]},
             "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {

@@ -243,6 +243,7 @@ def direct_request(body):
     skip_proxy = body.get("skip_proxy_verify", False)
     if type(skip_proxy) is not bool:
         raise ValueError("잘못된 TLS 검증 옵션입니다.")
+    envoy_skip = skip_proxy if via == "mitm" else skip
     upstream_tls = target.scheme == "https" if forward else listener == "https"
     if via == "mitm" and protocol == "HTTP/2" and not upstream_tls:
         raise ValueError("내장 MITM의 HTTP/2에는 TLS가 필요합니다.")
@@ -316,8 +317,8 @@ def direct_request(body):
                 front_ip = base.attrs["NetworkSettings"]["Networks"][project+"_front"]["IPAddress"]
                 with upstream_router(engine, base, container("tap-front"), project, front_ip, target,
                                      hop, hop_port, protocol, forward, listener == "https", ca,
-                                     skip_proxy if via == "mitm" else skip,
-                                     folder/"envoy.keys" if keys else None, wait_until):
+                                     envoy_skip,
+                                     folder/"envoy.keys" if keys else None, folder/"envoy-access.jsonl", wait_until):
                     start = str(time.time() + 0.8)
                     with ThreadPoolExecutor(max_workers=len(active)) as pool:
                         rows = [row for batch in pool.map(invoke, active) for row in batch]
@@ -333,13 +334,21 @@ def direct_request(body):
     finally:
         if decrypt and not keys:
             (folder/"proxy.keys").unlink(missing_ok=True)
+    records = {}
+    for line in (folder / "envoy-access.jsonl").read_text().splitlines():
+        entry = json.loads(line)
+        records[entry.pop("client"), str(entry.pop("request"))] = entry
+    for row in rows:
+        record = records.get((row["client"], str(row["request"])))
+        if record:
+            row["envoy"] = record
     (folder / "responses.json").write_text(json.dumps(rows,indent=2))
     extras = decrypted_files + [file for file in ("envoy.keys", "proxy.keys")
                                 if (folder/file).is_file() and (folder/file).stat().st_size]
     marker = folder / "url-result.tmp"
     marker.write_text(json.dumps({"run":run,"legs":list(plan),"extras":extras}))
     marker.replace(folder / "url-result.json")
-    return dict(run=run,legs=list(plan),extras=extras,url=url,external_mode=external_mode,mitm_mode=mitm_mode,protocol=protocol, via={"envoy":"Envoy","nginx":"Envoy → Nginx","mitm":"Envoy → 내장 "+("포워드" if mitm_mode=="forward" else "리버스"),"external":"Envoy → 외부 "+("리버스" if external_mode=="reverse" else "포워드")}[via], tls=("검증 생략" if skip else "검증 사용") if upstream_tls else "HTTP",
+    return dict(run=run,legs=list(plan),extras=extras,url=url,external_mode=external_mode,mitm_mode=mitm_mode,protocol=protocol, via={"envoy":"Envoy","nginx":"Envoy → Nginx","mitm":"Envoy → 내장 "+("포워드" if mitm_mode=="forward" else "리버스"),"external":"Envoy → 외부 "+("리버스" if external_mode=="reverse" else "포워드")}[via], tls=("검증 생략" if envoy_skip else "검증 사용") if (upstream_tls or listener == "https") else "HTTP",
                 responses=rows)
 
 def experiment(route, count):
